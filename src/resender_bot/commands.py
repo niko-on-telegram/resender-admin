@@ -10,7 +10,7 @@ async def set_bot_commands(bot: Bot) -> None:
                 description="/register <channel id> - bind this group to a channel",
             ),
             BotCommand(
-                command="set_random", description="sets order of sending to be random"
+                command="set_random", description="sets order of sending to be random",
             ),
             BotCommand(
                 command="set_ordered",
@@ -21,7 +21,7 @@ async def set_bot_commands(bot: Bot) -> None:
                 description="/set_interval <seconds> - set delay before messages in seconds",
             ),
             BotCommand(
-                command="info", description="get info about settings for current chat"
+                command="info", description="get info about settings for current chat",
             ),
         ],
         scope=BotCommandScopeAllChatAdministrators(),

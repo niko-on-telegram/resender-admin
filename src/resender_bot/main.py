@@ -10,12 +10,11 @@ from database.database_connector import get_db
 from middlewares.session_middleware import DBSessionMiddleware
 from middlewares.updates_dumper_middleware import UpdatesDumperMiddleware
 from resender_bot.commands import set_bot_commands
-from resender_bot.logging_config import setup_logs
-from resender_bot.notify_admin import on_startup_notify, on_shutdown_notify
-from resender_bot.settings import Settings
-
-from resender_bot.handlers.errors_handler import router as errors_router
 from resender_bot.handlers.base_handlers import router as base_router
+from resender_bot.handlers.errors_handler import router as errors_router
+from resender_bot.logging_config import setup_logs
+from resender_bot.notify_admin import on_shutdown_notify, on_startup_notify
+from resender_bot.settings import Settings
 
 
 async def main():

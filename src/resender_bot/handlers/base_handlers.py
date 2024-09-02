@@ -1,6 +1,6 @@
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import CommandStart, Command, CommandObject
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,12 +10,12 @@ router = Router()
 
 
 @router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
-async def start(message: Message) -> None:
-    await message.answer('Hello!\n' 'This bot works in groups only.')
+async def start_private_handler(message: Message) -> None:
+    await message.answer('Hello!\nThis bot works in groups only.')
 
 
 @router.message(CommandStart(), F.chat.type != ChatType.PRIVATE)
-async def start(message: Message) -> None:
+async def start_group_handler(message: Message) -> None:
     start_message = '\n'.join(
         [
             "Hello!",
@@ -26,14 +26,14 @@ async def start(message: Message) -> None:
             "/set_ordered - sets order of sending to be the same as they were sent",
             "/set_interval <seconds> - set delay before messages in seconds",
             "/info - get info about settings for current chat",
-        ]
+        ],
     )
     await message.answer(start_message)
 
 
 @router.message(Command('register'), F.chat.type != ChatType.PRIVATE)
-async def setup_command_group(
-    message: Message, command: CommandObject, db_session: AsyncSession
+async def register_handler(
+    message: Message, command: CommandObject, db_session: AsyncSession,
 ):
     private_chat_id = message.chat.id
 
@@ -45,11 +45,11 @@ async def setup_command_group(
 
     new_pair = GroupPair(public_chat_id=public_chat_id, private_chat_id=private_chat_id)
     db_session.add(new_pair)
-    await message.answer(f"Registered successfully!")
+    await message.answer("Registered successfully!")
 
 
 @router.message(Command('set_random'), F.chat.type != ChatType.PRIVATE)
-async def setup_command_group(message: Message, db_session: AsyncSession):
+async def set_random_handler(message: Message, db_session: AsyncSession):
     private_chat_id = message.chat.id
 
     chat_pair = await db_session.get(GroupPair, private_chat_id)
@@ -58,11 +58,11 @@ async def setup_command_group(message: Message, db_session: AsyncSession):
         return
 
     chat_pair.send_order = SendOrderEnum.RANDOM
-    await message.answer(f"Order is set to Random!")
+    await message.answer("Order is set to Random!")
 
 
 @router.message(Command('set_ordered'), F.chat.type != ChatType.PRIVATE)
-async def setup_command_group(message: Message, db_session: AsyncSession):
+async def set_ordered_handler(message: Message, db_session: AsyncSession):
     private_chat_id = message.chat.id
 
     chat_pair = await db_session.get(GroupPair, private_chat_id)
@@ -71,12 +71,12 @@ async def setup_command_group(message: Message, db_session: AsyncSession):
         return
 
     chat_pair.send_order = SendOrderEnum.OLDEST
-    await message.answer(f"Order is set to Ordered!")
+    await message.answer("Order is set to Ordered!")
 
 
 @router.message(Command('set_interval'), F.chat.type != ChatType.PRIVATE)
-async def setup_command_group(
-    message: Message, command: CommandObject, db_session: AsyncSession
+async def set_interval_handler(
+    message: Message, command: CommandObject, db_session: AsyncSession,
 ):
     private_chat_id = message.chat.id
 
@@ -96,7 +96,7 @@ async def setup_command_group(
 
 
 @router.message(Command('info'), F.chat.type != ChatType.PRIVATE)
-async def setup_command_group(message: Message, db_session: AsyncSession):
+async def info_handler(message: Message, db_session: AsyncSession):
     private_chat_id = message.chat.id
 
     chat_pair = await db_session.get(GroupPair, private_chat_id)
@@ -109,5 +109,5 @@ async def setup_command_group(message: Message, db_session: AsyncSession):
         f"├ Channel id: {chat_pair.public_chat_id}\n"
         f"├ This group id: {chat_pair.private_chat_id}\n"
         f"├ Send order: {chat_pair.send_order}\n"
-        f"└ Interval: {chat_pair.interval}\n"
+        f"└ Interval: {chat_pair.interval}\n",
     )

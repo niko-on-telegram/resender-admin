@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy.ext.asyncio import (
@@ -33,7 +33,7 @@ class GroupPair(Base):
 
     public_chat_id: Mapped[int]
     private_chat_id: Mapped[int] = mapped_column(
-        primary_key=True
+        primary_key=True,
     )  # autoincrement = False
     send_order: Mapped[SendOrderEnum] = mapped_column(default=SendOrderEnum.OLDEST)
     interval: Mapped[int] = mapped_column(default=180)
@@ -51,13 +51,12 @@ class DatabaseConnector:
     def __init__(
         self,
         url: str,
-        echo: bool = False,
         pool_size: int = 5,
         max_overflow: int = 10,
     ) -> None:
         self.engine: AsyncEngine = create_async_engine(
             url=url,
-            echo=echo,
+            echo=False,
             pool_size=pool_size,
             max_overflow=max_overflow,
         )

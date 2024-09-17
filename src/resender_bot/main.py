@@ -6,7 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from database.database_connector import get_db, DatabaseConnector
+from database.database_connector import get_db, DatabaseConnector, get_all_pairs
 from middlewares.session_middleware import DBSessionMiddleware
 from middlewares.updates_dumper_middleware import UpdatesDumperMiddleware
 from resender_bot.commands import set_bot_commands
@@ -19,7 +19,8 @@ from resender_bot.settings import Settings
 
 
 async def recreate_tasks(task_manager: SenderTaskManager, db: DatabaseConnector):
-    pairs = await db.get_all_pairs()
+    async with db.session_factory.begin() as db_session:
+        pairs = await get_all_pairs(db_session)
     for pair in pairs:
         logging.debug(f"Adding pair {pair}")
         task_manager.add_task(pair)
@@ -45,6 +46,7 @@ async def main():
 
     db_session_middleware = DBSessionMiddleware(db)
     dispatcher.message.middleware(db_session_middleware)
+    dispatcher.edited_message.middleware(db_session_middleware)
     dispatcher.callback_query.middleware(db_session_middleware)
     dispatcher.update.outer_middleware(UpdatesDumperMiddleware())
     dispatcher.startup.register(on_startup_notify)

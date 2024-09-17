@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 import aiogram
@@ -9,8 +8,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.database_connector import GroupPair, SendOrderEnum, ScheduledMessage
-from resender_bot import sender_task
+from database.database_connector import GroupPair, SendOrderEnum, ScheduledMessage, get_all_pairs, get_scheduled_message
 from resender_bot.sender_task import SenderTaskManager
 
 router = Router()
@@ -43,8 +41,6 @@ async def start_group_handler(message: Message) -> None:
 async def is_bot_admin(bot: Bot,
                        channel_id: int) -> bool:
     try:
-
-
         chat_administrators = await bot.get_chat_administrators(channel_id)
         return any(admin.user.id == bot.id for admin in chat_administrators)
     except TelegramAPIError:
@@ -112,7 +108,7 @@ async def set_interval_handler(
         message: Message,
         command: CommandObject,
         db_session: AsyncSession,
-task_manager: SenderTaskManager
+        task_manager: SenderTaskManager
 
 ):
     private_chat_id = message.chat.id
@@ -129,6 +125,7 @@ task_manager: SenderTaskManager
         return
 
     chat_pair.interval = interval
+    # noinspection PyTypeChecker
     task_manager.update_interval(chat_pair)
     await message.answer(f"Interval is set to {interval}!")
 
@@ -151,11 +148,77 @@ async def info_handler(message: Message, db_session: AsyncSession):
     )
 
 
+async def in_src(chat_id: int, db_session: AsyncSession):
+    pairs = await get_all_pairs(db_session)
+    src_ids = [pair.private_chat_id for pair in pairs]
+    return chat_id in src_ids
+
+
+def extract_text(text: str, entities):
+    if entities is None:
+        return text, []
+    message_cleared_text = bytearray()
+    encoded_text = text.encode("utf-16-le")
+    last_offset = 0
+    links = []
+    for ent in entities:
+        if ent.type != "url":
+            continue
+        encoded_link = encoded_text[ent.offset * 2: (ent.offset + ent.length) * 2]
+        last_offset = (ent.offset + ent.length) * 2 + 1
+        message_cleared_text += encoded_text[:ent.offset * 2]
+        link = encoded_link.decode("utf-16-le")
+        links.append(link)
+
+    message_cleared_text += encoded_text[last_offset:]
+    message_cleared_str = message_cleared_text.decode("utf-16-le")
+    return message_cleared_str, links
+
+
+def extract_info(message: Message):
+    message_cleared_str = None
+    links = []
+    if message.text:
+        message_cleared_str, links = extract_text(message.text, message.entities)
+    if message.caption:
+        message_cleared_str, links = extract_text(message.caption, message.caption_entities)
+    links_str = ';'.join(links) or None
+    file_ids = message.photo[-1].file_id if message.photo else None
+    return message_cleared_str, links_str, file_ids
+
+
 @router.message()
 async def any_message(message: Message, db_session: AsyncSession):
+    if not await in_src(message.chat.id, db_session):
+        return
+
     logging.info(f"Adding new message: {message.text=}")
+
+    message_cleared_str, links_str, file_ids = extract_info(message)
+
     scheduled_msg = ScheduledMessage(message_id=message.message_id,
-                                     group_pair_id=message.chat.id)
+                                     group_pair_id=message.chat.id,
+                                     text=message_cleared_str,
+                                     links=links_str,
+                                     file_ids=file_ids)
 
     db_session.add(scheduled_msg)
     await message.answer("Scheduled successfully")
+
+
+@router.edited_message()
+async def any_edit_message(message: Message, db_session: AsyncSession):
+    if not await in_src(message.chat.id, db_session):
+        return
+
+    logging.info(f"Editing existing message: {message.text=}")
+
+    message_cleared_str, links_str, file_ids = extract_info(message)
+
+    scheduled_msg = await get_scheduled_message(db_session, message.message_id,
+                                                message.chat.id)
+    scheduled_msg.text = message_cleared_str
+    scheduled_msg.links = links_str
+    scheduled_msg.file_ids = file_ids
+
+    logging.info("Updated successfully")

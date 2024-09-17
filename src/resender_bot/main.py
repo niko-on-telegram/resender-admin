@@ -6,7 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from database.database_connector import get_db
+from database.database_connector import get_db, DatabaseConnector
 from middlewares.session_middleware import DBSessionMiddleware
 from middlewares.updates_dumper_middleware import UpdatesDumperMiddleware
 from resender_bot.commands import set_bot_commands
@@ -14,7 +14,15 @@ from resender_bot.handlers.base_handlers import router as base_router
 from resender_bot.handlers.errors_handler import router as errors_router
 from resender_bot.logging_config import setup_logs
 from resender_bot.notify_admin import on_shutdown_notify, on_startup_notify
+from resender_bot.sender_task import SenderTaskManager
 from resender_bot.settings import Settings
+
+
+async def recreate_tasks(task_manager: SenderTaskManager, db: DatabaseConnector):
+    pairs = await db.get_all_pairs()
+    for pair in pairs:
+        logging.debug(f"Adding pair {pair}")
+        task_manager.add_task(pair)
 
 
 async def main():
@@ -31,11 +39,9 @@ async def main():
     storage = MemoryStorage()
     db = get_db(settings)
     await db.create_all()
-    tasks = []
-    dispatcher = Dispatcher(
-        storage=storage,
-        tasks=tasks,
-    )
+
+    task_manager = SenderTaskManager(db, bot)
+    dispatcher = Dispatcher(storage=storage, task_manager=task_manager, settings=settings)
 
     db_session_middleware = DBSessionMiddleware(db)
     dispatcher.message.middleware(db_session_middleware)
@@ -48,6 +54,8 @@ async def main():
         base_router,
         errors_router,
     )
+
+    await recreate_tasks(task_manager, db)
 
     await dispatcher.start_polling(bot)
 

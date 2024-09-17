@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from sqlalchemy import BigInteger, DateTime, select, and_
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -25,34 +26,35 @@ class MessageStatusEnum(StrEnum):
 class Base(DeclarativeBase):
     __abstract__ = True
 
-    created_at: Mapped[datetime] = mapped_column(default=datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now(UTC))
 
 
 class GroupPair(Base):
     __tablename__ = 'group_pairs'
 
-    public_chat_id: Mapped[int]
+    public_chat_id: Mapped[int] = mapped_column(BigInteger)
     private_chat_id: Mapped[int] = mapped_column(
-        primary_key=True,
-    )  # autoincrement = False
+        BigInteger, primary_key=True, autoincrement=False
+    )
     send_order: Mapped[SendOrderEnum] = mapped_column(default=SendOrderEnum.OLDEST)
     interval: Mapped[int] = mapped_column(default=180)
 
 
 class ScheduledMessage(Base):
-    __tablename__ = 'shedules_messages'
+    __tablename__ = 'scheduled_messages'
 
+    id: Mapped[int] = mapped_column(primary_key=True)
     message_id: Mapped[int]
-    group_pair_id: Mapped[int]
+    group_pair_id: Mapped[int] = mapped_column(BigInteger)
     status: Mapped[MessageStatusEnum] = mapped_column(default=MessageStatusEnum.NOT_SENT)
 
 
 class DatabaseConnector:
     def __init__(
-        self,
-        url: str,
-        pool_size: int = 5,
-        max_overflow: int = 10,
+            self,
+            url: str,
+            pool_size: int = 5,
+            max_overflow: int = 10,
     ) -> None:
         self.engine: AsyncEngine = create_async_engine(
             url=url,
@@ -73,6 +75,19 @@ class DatabaseConnector:
     async def create_all(self):
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+    async def get_next_msg(self, session, private_chat_id: int) -> ScheduledMessage | None:
+            query = select(ScheduledMessage).where(and_(ScheduledMessage.group_pair_id == private_chat_id,
+                                                        ScheduledMessage.status == MessageStatusEnum.NOT_SENT)
+                                                   ).order_by(ScheduledMessage.created_at).limit(1)
+            result = await session.execute(query)
+            return result.scalar_one_or_none()
+
+    async def get_all_pairs(self) -> list[GroupPair]:
+        async with self.session_factory() as session:
+            query = select(GroupPair)
+            result = await session.execute(query)
+            return list(result.scalars())
 
 
 def get_db(settings: Settings) -> DatabaseConnector:

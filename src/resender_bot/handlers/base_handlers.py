@@ -1,10 +1,17 @@
-from aiogram import F, Router
+import asyncio
+import logging
+
+import aiogram
+from aiogram import F, Router, Bot
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.database_connector import GroupPair, SendOrderEnum
+from database.database_connector import GroupPair, SendOrderEnum, ScheduledMessage
+from resender_bot import sender_task
+from resender_bot.sender_task import SenderTaskManager
 
 router = Router()
 
@@ -16,35 +23,61 @@ async def start_private_handler(message: Message) -> None:
 
 @router.message(CommandStart(), F.chat.type != ChatType.PRIVATE)
 async def start_group_handler(message: Message) -> None:
-    start_message = '\n'.join(
+    start_message = '\n\n'.join(
         [
             "Hello!",
             "Here's a list of supported commands:",
-            "/register <channel id> - bind this group to a channel",
+            aiogram.html.quote("/register <channel id> - bind this group to a channel"),
             "(bot must be admin in both)\n",
             "/set_random - sets order of sending to be random",
             "/set_ordered - sets order of sending to be the same as they were sent",
-            "/set_interval <seconds> - set delay before messages in seconds",
+            aiogram.html.quote(
+                "/set_interval <seconds> - set delay before messages in seconds"
+            ),
             "/info - get info about settings for current chat",
         ],
     )
     await message.answer(start_message)
 
 
+async def is_bot_admin(bot: Bot,
+                       channel_id: int) -> bool:
+    try:
+
+
+        chat_administrators = await bot.get_chat_administrators(channel_id)
+        return any(admin.user.id == bot.id for admin in chat_administrators)
+    except TelegramAPIError:
+        logging.exception(f"Error checking if bot is admin")
+        return False
+
+
 @router.message(Command('register'), F.chat.type != ChatType.PRIVATE)
 async def register_handler(
-    message: Message, command: CommandObject, db_session: AsyncSession,
+        message: Message,
+        bot: Bot,
+        command: CommandObject,
+        db_session: AsyncSession,
+        task_manager: SenderTaskManager
 ):
     private_chat_id = message.chat.id
 
     try:
-        public_chat_id = int(command.args)
-    except ValueError:
+        channel_id_str = command.args
+        if not channel_id_str.startswith("-100"):
+            channel_id_str = "-100" + channel_id_str
+        channel_id = int(channel_id_str)
+    except (ValueError, TypeError):
         await message.answer("/register requires integer as parameter")
         return
 
-    new_pair = GroupPair(public_chat_id=public_chat_id, private_chat_id=private_chat_id)
+    if not await is_bot_admin(bot, channel_id):
+        await message.answer("Bot must be an administrator in the registered channel")
+        return
+
+    new_pair = GroupPair(public_chat_id=channel_id, private_chat_id=private_chat_id)
     db_session.add(new_pair)
+    task_manager.add_task(new_pair)
     await message.answer("Registered successfully!")
 
 
@@ -76,13 +109,17 @@ async def set_ordered_handler(message: Message, db_session: AsyncSession):
 
 @router.message(Command('set_interval'), F.chat.type != ChatType.PRIVATE)
 async def set_interval_handler(
-    message: Message, command: CommandObject, db_session: AsyncSession,
+        message: Message,
+        command: CommandObject,
+        db_session: AsyncSession,
+task_manager: SenderTaskManager
+
 ):
     private_chat_id = message.chat.id
 
     try:
         interval = int(command.args)
-    except ValueError:
+    except (ValueError, TypeError):
         await message.answer("/set_interval requires integer as parameter")
         return
 
@@ -92,6 +129,7 @@ async def set_interval_handler(
         return
 
     chat_pair.interval = interval
+    task_manager.update_interval(chat_pair)
     await message.answer(f"Interval is set to {interval}!")
 
 
@@ -111,3 +149,13 @@ async def info_handler(message: Message, db_session: AsyncSession):
         f"├ Send order: {chat_pair.send_order}\n"
         f"└ Interval: {chat_pair.interval}\n",
     )
+
+
+@router.message()
+async def any_message(message: Message, db_session: AsyncSession):
+    logging.info(f"Adding new message: {message.text=}")
+    scheduled_msg = ScheduledMessage(message_id=message.message_id,
+                                     group_pair_id=message.chat.id)
+
+    db_session.add(scheduled_msg)
+    await message.answer("Scheduled successfully")

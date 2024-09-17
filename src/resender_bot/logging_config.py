@@ -27,7 +27,7 @@ def get_logging_config(app_name: str):
         "handlers": {
             "stdout": {
                 "class": "logging.StreamHandler",
-                "level": "INFO",
+                "level": "DEBUG",
                 "formatter": "main",
                 "stream": sys.stdout,
             },

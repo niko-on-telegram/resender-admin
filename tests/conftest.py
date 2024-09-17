@@ -14,7 +14,7 @@ async def db():
     postgres = PostgresContainer("postgres:16-alpine", driver="asyncpg")
     postgres.start()
 
-    test_database = DatabaseConnector(url=postgres.get_connection_url(), echo=True)
+    test_database = DatabaseConnector(url=postgres.get_connection_url())
 
     await test_database.create_all()
 

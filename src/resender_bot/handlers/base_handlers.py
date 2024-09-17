@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import aiogram
@@ -200,10 +201,15 @@ async def any_message(message: Message, db_session: AsyncSession):
                                      group_pair_id=message.chat.id,
                                      text=message_cleared_str,
                                      links=links_str,
-                                     file_ids=file_ids)
+                                     file_ids=file_ids,
+                                     media_group_id=message.media_group_id)
 
     db_session.add(scheduled_msg)
-    await message.answer("Scheduled successfully")
+    msg = await message.answer("Scheduled successfully")
+    # hack
+    await db_session.commit()
+    await asyncio.sleep(5)
+    await msg.delete()
 
 
 @router.edited_message()

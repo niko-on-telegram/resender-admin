@@ -3,10 +3,13 @@ import logging
 from asyncio import Task
 
 from aiogram import Bot
+from aiogram.enums import InputMediaType
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import URLInputFile
+from aiogram.types import URLInputFile, InputFile, InputMediaPhoto
+from aiogram.utils.media_group import MediaGroupBuilder
 
-from database.database_connector import GroupPair, DatabaseConnector, MessageStatusEnum, get_next_msg
+from database.database_connector import GroupPair, DatabaseConnector, MessageStatusEnum, get_next_msg, \
+    get_all_matching_media
 
 
 class SenderTaskManager:
@@ -38,24 +41,55 @@ class SenderTaskManager:
                 if next_msg is None:
                     await asyncio.sleep(group_pair.interval)
                     continue
+
                 logging.debug("Sending...")
 
                 try:
-                    if next_msg.file_ids:
+                    if next_msg.media_group_id:
+                        # noinspection PyTypeChecker
+                        msg_media_group = await get_all_matching_media(session, next_msg.media_group_id)
+                        media_list = []
+                        for msg in msg_media_group:
+                            single_media = InputMediaPhoto(media=msg.file_ids)
+                            if msg.text:
+                                single_media.caption = msg.text
+                            media_list.append(single_media)
+                        sent_msgs = await self.bot.send_media_group(group_pair.public_chat_id,
+                                                                    media=media_list)
+                        sent_msg = sent_msgs[0]
+                        # hack
+                        for msg in msg_media_group:
+                            msg.status = MessageStatusEnum.SENT
+
+                            try:
+                                await self.bot.delete_message(msg.group_pair_id,
+                                                              msg.message_id)
+                            except TelegramAPIError:
+                                logging.exception("Exception while trying to delete message:")
+                    elif next_msg.file_ids:
+                        # noinspection PyTypeChecker
                         sent_msg = await self.bot.send_photo(group_pair.public_chat_id, next_msg.file_ids,
                                                              caption=next_msg.text, request_timeout=20)
                     elif next_msg.links:
+                        # noinspection PyTypeChecker
                         sent_msg = await self.bot.send_photo(group_pair.public_chat_id,
                                                              URLInputFile(url=next_msg.links),
                                                              caption=next_msg.text, request_timeout=20)
                     elif next_msg.text:
+                        # noinspection PyTypeChecker
                         sent_msg = await self.bot.send_message(group_pair.public_chat_id,
                                                                text=next_msg.text, request_timeout=20)
 
                     logging.debug(f"{sent_msg=}")
                     next_msg.status = MessageStatusEnum.SENT
                 except TelegramAPIError:
-                    logging.exception("Exception while trying to resend message:")
+                    logging.warning("Exception while trying to resend message:")
                     next_msg.status = MessageStatusEnum.ERROR
+
+                try:
+                    await self.bot.delete_message(next_msg.group_pair_id,
+                                                  next_msg.message_id)
+                except TelegramAPIError:
+                    logging.exception("Exception while trying to delete message:")
 
             await asyncio.sleep(group_pair.interval)

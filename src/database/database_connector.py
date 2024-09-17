@@ -56,6 +56,7 @@ class ScheduledMessage(Base):
     text: Mapped[str | None]
     links: Mapped[str | None]
     file_ids: Mapped[str | None]
+    media_group_id: Mapped[str | None]
 
     def __str__(self):
         return (
@@ -87,6 +88,16 @@ async def get_next_msg(
 
 async def get_all_pairs(db_session: AsyncSession) -> list[GroupPair]:
     query = select(GroupPair)
+    result = await db_session.execute(query)
+    return list(result.scalars())
+
+
+async def get_all_matching_media(
+    db_session: AsyncSession, media_group_id: str
+) -> list[ScheduledMessage]:
+    query = select(ScheduledMessage).where(
+        ScheduledMessage.media_group_id == media_group_id
+    )
     result = await db_session.execute(query)
     return list(result.scalars())
 

@@ -158,7 +158,7 @@ async def in_src(chat_id: int, db_session: AsyncSession):
 def extract_text(text: str, entities):
     if entities is None:
         return text, []
-    message_cleared_text = bytearray()
+    message_cleared_text = ""
     encoded_text = text.encode("utf-16-le")
     last_offset = 0
     links = []
@@ -166,14 +166,14 @@ def extract_text(text: str, entities):
         if ent.type != "url":
             continue
         encoded_link = encoded_text[ent.offset * 2: (ent.offset + ent.length) * 2]
-        last_offset = (ent.offset + ent.length) * 2 + 1
-        message_cleared_text += encoded_text[:ent.offset * 2]
+        decoded_text_piece = encoded_text[last_offset:ent.offset * 2].decode('utf-16-le')
+        message_cleared_text += decoded_text_piece
+        last_offset = (ent.offset + ent.length) * 2
         link = encoded_link.decode("utf-16-le")
         links.append(link)
 
-    message_cleared_text += encoded_text[last_offset:]
-    message_cleared_str = message_cleared_text.decode("utf-16-le")
-    return message_cleared_str, links
+    message_cleared_text += encoded_text[last_offset:].decode('utf-16-le')
+    return message_cleared_text, links
 
 
 def extract_info(message: Message):
@@ -184,8 +184,8 @@ def extract_info(message: Message):
     if message.caption:
         message_cleared_str, links = extract_text(message.caption, message.caption_entities)
     links_str = ';'.join(links) or None
-    file_ids = message.photo[-1].file_id if message.photo else None
-    return message_cleared_str, links_str, file_ids
+    file_id = message.photo[-1].file_id if message.photo else None
+    return message_cleared_str, links_str, file_id
 
 
 @router.message()
@@ -195,13 +195,13 @@ async def any_message(message: Message, db_session: AsyncSession):
 
     logging.info(f"Adding new message: {message.text=}")
 
-    message_cleared_str, links_str, file_ids = extract_info(message)
+    message_cleared_str, links_str, file_id = extract_info(message)
 
     scheduled_msg = ScheduledMessage(message_id=message.message_id,
                                      group_pair_id=message.chat.id,
                                      text=message_cleared_str,
                                      links=links_str,
-                                     file_ids=file_ids,
+                                     file_id=file_id,
                                      media_group_id=message.media_group_id)
 
     db_session.add(scheduled_msg)
@@ -219,12 +219,12 @@ async def any_edit_message(message: Message, db_session: AsyncSession):
 
     logging.info(f"Editing existing message: {message.text=}")
 
-    message_cleared_str, links_str, file_ids = extract_info(message)
+    message_cleared_str, links_str, file_id = extract_info(message)
 
     scheduled_msg = await get_scheduled_message(db_session, message.message_id,
                                                 message.chat.id)
     scheduled_msg.text = message_cleared_str
     scheduled_msg.links = links_str
-    scheduled_msg.file_ids = file_ids
+    scheduled_msg.file_id = file_id
 
     logging.info("Updated successfully")

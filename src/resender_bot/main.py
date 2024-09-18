@@ -3,6 +3,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -31,9 +32,12 @@ async def main():
 
     settings = Settings()
 
+    session = AiohttpSession(timeout=120)
+
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=session
     )
 
     logging.info("bot started")
@@ -41,7 +45,7 @@ async def main():
     db = get_db(settings)
     await db.create_all()
 
-    task_manager = SenderTaskManager(db, bot)
+    task_manager = SenderTaskManager(db, bot, settings.ADMIN_ID)
     dispatcher = Dispatcher(storage=storage, task_manager=task_manager, settings=settings)
 
     db_session_middleware = DBSessionMiddleware(db)

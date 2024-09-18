@@ -55,13 +55,13 @@ class ScheduledMessage(Base):
     status: Mapped[MessageStatusEnum] = mapped_column(default=MessageStatusEnum.NOT_SENT)
     text: Mapped[str | None]
     links: Mapped[str | None]
-    file_ids: Mapped[str | None]
+    file_id: Mapped[str | None]
     media_group_id: Mapped[str | None]
 
     def __str__(self):
         return (
             f"ScheduledMessage(id={self.id}, message_id={self.message_id}, group_pair_id={self.group_pair_id},"
-            f"status={self.status} text={self.text} links={self.links} file_ids={self.file_ids})"
+            f"status={self.status} text={self.text} links={self.links} file_ids={self.file_id})"
         )
 
 

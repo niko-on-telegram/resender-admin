@@ -5,11 +5,23 @@ import aiogram
 from aiogram import F, Router, Bot
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import Message
+from aiogram.filters import (
+    Command,
+    CommandObject,
+    CommandStart,
+    ChatMemberUpdatedFilter,
+    ADMINISTRATOR,
+)
+from aiogram.types import Message, ChatMemberUpdated
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.database_connector import GroupPair, SendOrderEnum, ScheduledMessage, get_all_pairs, get_scheduled_message
+from database.database_connector import (
+    GroupPair,
+    SendOrderEnum,
+    ScheduledMessage,
+    get_all_pairs,
+    get_scheduled_message,
+)
 from resender_bot.sender_task import SenderTaskManager
 
 router = Router()
@@ -18,6 +30,14 @@ router = Router()
 @router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
 async def start_private_handler(message: Message) -> None:
     await message.answer('Hello!\nThis bot works in groups only.')
+
+
+@router.my_chat_member(
+    ChatMemberUpdatedFilter(member_status_changed=ADMINISTRATOR),
+    F.chat.type == ChatType.CHANNEL,
+)
+async def user_unblocked_bot(event: ChatMemberUpdated):
+    await event.answer(f"Channel ID: {event.chat.id}")
 
 
 @router.message(CommandStart(), F.chat.type != ChatType.PRIVATE)
@@ -39,8 +59,7 @@ async def start_group_handler(message: Message) -> None:
     await message.answer(start_message)
 
 
-async def is_bot_admin(bot: Bot,
-                       channel_id: int) -> bool:
+async def is_bot_admin(bot: Bot, channel_id: int) -> bool:
     try:
         chat_administrators = await bot.get_chat_administrators(channel_id)
         return any(admin.user.id == bot.id for admin in chat_administrators)
@@ -51,11 +70,11 @@ async def is_bot_admin(bot: Bot,
 
 @router.message(Command('register'), F.chat.type != ChatType.PRIVATE)
 async def register_handler(
-        message: Message,
-        bot: Bot,
-        command: CommandObject,
-        db_session: AsyncSession,
-        task_manager: SenderTaskManager
+    message: Message,
+    bot: Bot,
+    command: CommandObject,
+    db_session: AsyncSession,
+    task_manager: SenderTaskManager,
 ):
     private_chat_id = message.chat.id
 
@@ -106,11 +125,10 @@ async def set_ordered_handler(message: Message, db_session: AsyncSession):
 
 @router.message(Command('set_interval'), F.chat.type != ChatType.PRIVATE)
 async def set_interval_handler(
-        message: Message,
-        command: CommandObject,
-        db_session: AsyncSession,
-        task_manager: SenderTaskManager
-
+    message: Message,
+    command: CommandObject,
+    db_session: AsyncSession,
+    task_manager: SenderTaskManager,
 ):
     private_chat_id = message.chat.id
 
@@ -166,8 +184,10 @@ def extract_text(text: str, entities):
     for ent in entities:
         if ent.type != "url":
             continue
-        encoded_link = encoded_text[ent.offset * 2: (ent.offset + ent.length) * 2]
-        decoded_text_piece = encoded_text[last_offset:ent.offset * 2].decode('utf-16-le')
+        encoded_link = encoded_text[ent.offset * 2 : (ent.offset + ent.length) * 2]
+        decoded_text_piece = encoded_text[last_offset : ent.offset * 2].decode(
+            'utf-16-le'
+        )
         message_cleared_text += decoded_text_piece
         last_offset = (ent.offset + ent.length) * 2
         link = encoded_link.decode("utf-16-le")
@@ -183,7 +203,9 @@ def extract_info(message: Message):
     if message.text:
         message_cleared_str, links = extract_text(message.text, message.entities)
     if message.caption:
-        message_cleared_str, links = extract_text(message.caption, message.caption_entities)
+        message_cleared_str, links = extract_text(
+            message.caption, message.caption_entities
+        )
     links_str = ';'.join(links) or None
     file_id = message.photo[-1].file_id if message.photo else None
     return message_cleared_str, links_str, file_id
@@ -198,12 +220,14 @@ async def any_message(message: Message, db_session: AsyncSession):
 
     message_cleared_str, links_str, file_id = extract_info(message)
 
-    scheduled_msg = ScheduledMessage(message_id=message.message_id,
-                                     group_pair_id=message.chat.id,
-                                     text=message_cleared_str,
-                                     links=links_str,
-                                     file_id=file_id,
-                                     media_group_id=message.media_group_id)
+    scheduled_msg = ScheduledMessage(
+        message_id=message.message_id,
+        group_pair_id=message.chat.id,
+        text=message_cleared_str,
+        links=links_str,
+        file_id=file_id,
+        media_group_id=message.media_group_id,
+    )
 
     db_session.add(scheduled_msg)
     msg = await message.answer("Scheduled successfully")
@@ -222,8 +246,9 @@ async def any_edit_message(message: Message, db_session: AsyncSession):
 
     message_cleared_str, links_str, file_id = extract_info(message)
 
-    scheduled_msg = await get_scheduled_message(db_session, message.message_id,
-                                                message.chat.id)
+    scheduled_msg = await get_scheduled_message(
+        db_session, message.message_id, message.chat.id
+    )
     scheduled_msg.text = message_cleared_str
     scheduled_msg.links = links_str
     scheduled_msg.file_id = file_id

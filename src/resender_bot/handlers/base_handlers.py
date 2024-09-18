@@ -64,7 +64,7 @@ async def register_handler(
         if not channel_id_str.startswith("-100"):
             channel_id_str = "-100" + channel_id_str
         channel_id = int(channel_id_str)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         await message.answer("/register requires integer as parameter")
         return
 

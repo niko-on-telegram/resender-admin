@@ -29,22 +29,21 @@ class SenderTaskManager:
         self.db = db
         self.bot = bot
         self.admin_id = admin_id
+        self.events: dict[int, asyncio.Event] = {}
 
     def add_task(self, group_pair: GroupPair):
         self.tasks[group_pair.private_chat_id] = asyncio.create_task(
             self._sender_task(group_pair.private_chat_id),
             name=str(group_pair.private_chat_id),
         )
+        self.events[group_pair.private_chat_id] = asyncio.Event()
 
     def update_interval(self, group_pair: GroupPair):
-        self.tasks[group_pair.private_chat_id].cancel()
-        self.tasks[group_pair.private_chat_id] = asyncio.create_task(
-            self._sender_task(group_pair.private_chat_id),
-            name=str(group_pair.private_chat_id),
-        )
+        self.events[group_pair.private_chat_id].set()
 
     async def _process_single_msg(self, private_chat_id: int):
         logging.debug(f"{private_chat_id=}: Getting next msg")
+        event = self.events[private_chat_id]
         async with self.db.session_factory.begin() as session:
             group_pair = await session.get(GroupPair, private_chat_id)
             if group_pair is None:
@@ -53,7 +52,7 @@ class SenderTaskManager:
             next_msg = await get_next_msg(session, group_pair)
             logging.debug(f"{private_chat_id=}: Next msg is {next_msg}")
             if next_msg is None:
-                await asyncio.sleep(group_pair.interval)
+                await asyncio.wait_for(event.wait(), timeout=group_pair.interval)
                 return
 
             logging.debug(f"{private_chat_id=}: Sending...")
@@ -148,12 +147,15 @@ class SenderTaskManager:
             except TelegramAPIError:
                 logging.exception(f"{private_chat_id=}: Exception while trying to delete message:")
 
-        await asyncio.sleep(group_pair.interval)
+        await asyncio.wait_for(event.wait(), timeout=group_pair.interval)
 
     async def _sender_task(self, private_chat_id: int):
         while True:
             try:
+                self.events[private_chat_id].clear()
                 await self._process_single_msg(private_chat_id)
+            except TimeoutError:
+                pass
             except Exception as e:
                 logging.exception("Unexpected thing happened:")
 

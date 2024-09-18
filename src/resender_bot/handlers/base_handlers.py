@@ -126,6 +126,7 @@ async def set_interval_handler(
         return
 
     chat_pair.interval = interval
+    await db_session.commit()
     # noinspection PyTypeChecker
     task_manager.update_interval(chat_pair)
     await message.answer(f"Interval is set to {interval}!")

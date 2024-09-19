@@ -58,6 +58,8 @@ class ScheduledMessage(Base):
     file_id: Mapped[str | None]
     media_group_id: Mapped[str | None]
     media_type: Mapped[str | None]
+    meta_info: Mapped[str]
+
 
     def __str__(self):
         return (

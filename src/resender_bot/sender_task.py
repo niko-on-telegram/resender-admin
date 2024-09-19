@@ -20,7 +20,7 @@ from database.database_connector import (
 async def get_mime(link: str):
     async with aiohttp.ClientSession() as session:
         async with session.get(link) as r:
-            return r.content_type.split('/')[0]
+            return r.content_type.split('/')
 
 
 class SenderTaskManager:
@@ -45,11 +45,11 @@ class SenderTaskManager:
         logging.debug(f"{private_chat_id=}: Getting next msg")
         event = self.events[private_chat_id]
         async with self.db.session_factory.begin() as session:
-            group_pair = await session.get(GroupPair, private_chat_id)
+            # noinspection PyTypeChecker
+            group_pair: GroupPair = await session.get(GroupPair, private_chat_id)
             if group_pair is None:
                 raise RuntimeError(
                     f"{private_chat_id=}: No group pair in the database for {private_chat_id=}, quiting this task")
-            # noinspection PyTypeChecker
             next_msg = await get_next_msg(session, group_pair)
             logging.debug(f"{private_chat_id=}: Next msg is {next_msg}")
             if next_msg is None:
@@ -66,16 +66,22 @@ class SenderTaskManager:
                     msg_media_group = await get_all_matching_media(
                         session, next_msg.media_group_id
                     )
-                    # noinspection PyTypeChecker
                     sent_msg = await self.send_group_media(msg_media_group, group_pair)
+                elif next_msg.file_id and next_msg.links:
+                    sent_msg = await self.send_mixed_media(next_msg, group_pair)
                 elif next_msg.file_id:
-                    # noinspection PyTypeChecker
                     sent_msg = await self.send_single_media(next_msg, group_pair)
                 elif next_msg.links:
                     splited_links = next_msg.links.split(';')
                     if len(splited_links) == 1:
-                        mime = await get_mime(splited_links[0])
-                        if mime == 'image':
+                        mime, detail = await get_mime(splited_links[0])
+                        if mime == 'image' and detail == 'gif':
+                            sent_msg = await self.bot.send_animation(
+                                group_pair.public_chat_id,
+                                URLInputFile(url=splited_links[0]),
+                                caption=next_msg.text
+                            )
+                        elif mime == 'image':
                             # noinspection PyTypeChecker
                             sent_msg = await self.bot.send_photo(
                                 group_pair.public_chat_id,
@@ -93,11 +99,15 @@ class SenderTaskManager:
                     else:
                         media_list = []
                         for link in splited_links:
-                            mime = await get_mime(link)
-                            if mime == 'image':
+                            mime, detail = await get_mime(link)
+                            if detail == 'gif':
+                                single_media = InputMediaAnimation(media=URLInputFile(url=link))
+                            elif mime == 'image':
                                 single_media = InputMediaPhoto(media=URLInputFile(url=link))
                             elif mime == 'video':
                                 single_media = InputMediaVideo(media=URLInputFile(url=link))
+                            else:
+                                raise RuntimeError(f"{next_msg.id=}: Unexpected mime type")
                             media_list.append(single_media)
                         media_list[0].caption = next_msg.text
                         sent_msgs = await self.bot.send_media_group(group_pair.public_chat_id,
@@ -199,6 +209,22 @@ class SenderTaskManager:
                 single_media.caption = msg.text
             media_list.append(single_media)
 
+        for msg in msg_media_group:
+            if not msg.links:
+                continue
+            splited_links = msg.links.split(';')
+            for link in splited_links:
+                mime, detail = await get_mime(link)
+                if detail == 'gif':
+                    single_media = InputMediaAnimation(media=URLInputFile(url=link))
+                elif mime == 'image':
+                    single_media = InputMediaPhoto(media=URLInputFile(url=link))
+                elif mime == 'video':
+                    single_media = InputMediaVideo(media=URLInputFile(url=link))
+                else:
+                    raise RuntimeError(f"{msg.id=}: Unexpected mime type")
+                media_list.append(single_media)
+
         sent_msgs = await self.bot.send_media_group(
             group_pair.public_chat_id, media=media_list
         )
@@ -216,3 +242,37 @@ class SenderTaskManager:
                 pass
 
         return sent_msgs[0]
+
+    async def send_mixed_media(self, msg: ScheduledMessage, group_pair: GroupPair):
+        media_list = []
+        splited_links = msg.links.split(';')
+        for link in splited_links:
+            mime, detail = await get_mime(link)
+            if detail == 'gif':
+                single_media = InputMediaAnimation(media=URLInputFile(url=link))
+            elif mime == 'image':
+                single_media = InputMediaPhoto(media=URLInputFile(url=link))
+            elif mime == 'video':
+                single_media = InputMediaVideo(media=URLInputFile(url=link))
+            else:
+                raise RuntimeError(f"{msg.id=}: Unexpected mime type")
+            media_list.append(single_media)
+
+        if msg.media_type == 'PHOTO':
+            single_media = InputMediaPhoto(media=msg.file_id)
+        elif msg.media_type == 'VIDEO':
+            single_media = InputMediaVideo(media=msg.file_id)
+        elif msg.media_type == 'ANIMATION':
+            single_media = InputMediaAnimation(media=msg.file_id)
+        else:
+            raise RuntimeError(f"{msg.id=}: Unexpected media type")
+
+        media_list.append(single_media)
+
+        media_list[0].caption = msg.text
+        sent_msgs = await self.bot.send_media_group(group_pair.public_chat_id,
+                                                    media=media_list,
+                                                    request_timeout=90)
+        return sent_msgs[0]
+
+

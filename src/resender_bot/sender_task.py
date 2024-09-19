@@ -57,6 +57,8 @@ class SenderTaskManager:
 
             logging.debug(f"{private_chat_id=}: Sending...")
 
+            sent_msg = None
+
             try:
                 if next_msg.media_group_id:
                     # noinspection PyTypeChecker
@@ -134,7 +136,11 @@ class SenderTaskManager:
                         request_timeout=20,
                     )
 
-                logging.debug(f"{private_chat_id=}: {sent_msg=}")
+                if sent_msg is not None:
+                    logging.debug(f"{private_chat_id=}: {sent_msg=}")
+                else:
+                    logging.error(f"{private_chat_id=}: Sent msg is None for some reason")
+                    await self.bot.send_message(self.admin_id, f"{private_chat_id=}: Sent msg is None for some reason")
                 next_msg.status = MessageStatusEnum.SENT
             except TelegramAPIError:
                 logging.exception(f"{private_chat_id=}: Exception while trying to resend message:")

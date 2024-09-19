@@ -146,9 +146,9 @@ class SenderTaskManager:
                     await self.bot.send_message(self.admin_id, err)
                 next_msg.status = MessageStatusEnum.SENT
             except TelegramAPIError:
-                logging.exception(
-                    f"{private_chat_id=}: Exception while trying to resend message:"
-                )
+                err = f"{private_chat_id=}: Exception while trying to resend message:"
+                logging.exception(err)
+                await self.bot.send_message(self.admin_id, err)
                 next_msg.status = MessageStatusEnum.ERROR
 
             try:

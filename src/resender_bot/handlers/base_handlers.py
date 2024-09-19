@@ -241,11 +241,8 @@ async def any_message(message: Message, db_session: AsyncSession):
     )
 
     db_session.add(scheduled_msg)
-    msg = await message.answer("Scheduled successfully")
-    # hack
-    await db_session.commit()
-    await asyncio.sleep(5)
-    await msg.delete()
+
+    logging.info("Scheduled successfully")
 
 
 @router.edited_message()

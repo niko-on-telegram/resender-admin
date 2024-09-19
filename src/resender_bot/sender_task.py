@@ -6,14 +6,20 @@ from asyncio import Task
 import aiohttp
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import URLInputFile, InputMediaPhoto, InputMediaVideo, InputMediaAnimation
+from aiogram.types import (
+    URLInputFile,
+    InputMediaPhoto,
+    InputMediaVideo,
+    InputMediaAnimation,
+)
 
 from database.database_connector import (
     GroupPair,
     DatabaseConnector,
     MessageStatusEnum,
     get_next_msg,
-    get_all_matching_media, ScheduledMessage,
+    get_all_matching_media,
+    ScheduledMessage,
 )
 
 
@@ -43,17 +49,17 @@ class SenderTaskManager:
 
     async def _process_single_msg(self, private_chat_id: int):
         logging.debug(f"{private_chat_id=}: Getting next msg")
-        event = self.events[private_chat_id]
+
         async with self.db.session_factory.begin() as session:
             # noinspection PyTypeChecker
             group_pair: GroupPair = await session.get(GroupPair, private_chat_id)
             if group_pair is None:
                 raise RuntimeError(
-                    f"{private_chat_id=}: No group pair in the database for {private_chat_id=}, quiting this task")
+                    f"{private_chat_id=}: No group pair in the database for {private_chat_id=}, quiting this task"
+                )
             next_msg = await get_next_msg(session, group_pair)
             logging.debug(f"{private_chat_id=}: Next msg is {next_msg}")
             if next_msg is None:
-                await asyncio.wait_for(event.wait(), timeout=group_pair.interval)
                 return
 
             logging.debug(f"{private_chat_id=}: Sending...")
@@ -79,14 +85,14 @@ class SenderTaskManager:
                             sent_msg = await self.bot.send_animation(
                                 group_pair.public_chat_id,
                                 URLInputFile(url=splited_links[0]),
-                                caption=next_msg.text
+                                caption=next_msg.text,
                             )
                         elif mime == 'image':
                             # noinspection PyTypeChecker
                             sent_msg = await self.bot.send_photo(
                                 group_pair.public_chat_id,
                                 URLInputFile(url=splited_links[0]),
-                                caption=next_msg.text
+                                caption=next_msg.text,
                             )
                         elif mime == 'video':
                             # noinspection PyTypeChecker
@@ -94,25 +100,35 @@ class SenderTaskManager:
                                 group_pair.public_chat_id,
                                 URLInputFile(url=splited_links[0]),
                                 caption=next_msg.text,
-                                request_timeout=90
+                                request_timeout=90,
                             )
                     else:
                         media_list = []
                         for link in splited_links:
                             mime, detail = await get_mime(link)
                             if detail == 'gif':
-                                single_media = InputMediaAnimation(media=URLInputFile(url=link))
+                                single_media = InputMediaAnimation(
+                                    media=URLInputFile(url=link)
+                                )
                             elif mime == 'image':
-                                single_media = InputMediaPhoto(media=URLInputFile(url=link))
+                                single_media = InputMediaPhoto(
+                                    media=URLInputFile(url=link)
+                                )
                             elif mime == 'video':
-                                single_media = InputMediaVideo(media=URLInputFile(url=link))
+                                single_media = InputMediaVideo(
+                                    media=URLInputFile(url=link)
+                                )
                             else:
-                                raise RuntimeError(f"{next_msg.id=}: Unexpected mime type")
+                                raise RuntimeError(
+                                    f"{next_msg.id=}: Unexpected mime type"
+                                )
                             media_list.append(single_media)
                         media_list[0].caption = next_msg.text
-                        sent_msgs = await self.bot.send_media_group(group_pair.public_chat_id,
-                                                                    media=media_list,
-                                                                    request_timeout=90)
+                        sent_msgs = await self.bot.send_media_group(
+                            group_pair.public_chat_id,
+                            media=media_list,
+                            request_timeout=90,
+                        )
                         sent_msg = sent_msgs[0]
                 elif next_msg.text:
                     # noinspection PyTypeChecker
@@ -130,23 +146,27 @@ class SenderTaskManager:
                     await self.bot.send_message(self.admin_id, err)
                 next_msg.status = MessageStatusEnum.SENT
             except TelegramAPIError:
-                logging.exception(f"{private_chat_id=}: Exception while trying to resend message:")
+                logging.exception(
+                    f"{private_chat_id=}: Exception while trying to resend message:"
+                )
                 next_msg.status = MessageStatusEnum.ERROR
 
             try:
-                await self.bot.delete_message(
-                    next_msg.group_pair_id, next_msg.message_id
-                )
+                await self.bot.delete_message(next_msg.group_pair_id, next_msg.message_id)
             except TelegramAPIError:
-                logging.exception(f"{private_chat_id=}: Exception while trying to delete message:")
+                logging.exception(
+                    f"{private_chat_id=}: Exception while trying to delete message:"
+                )
 
-        await asyncio.wait_for(event.wait(), timeout=group_pair.interval)
+        return group_pair.interval
 
     async def _sender_task(self, private_chat_id: int):
         while True:
             try:
-                self.events[private_chat_id].clear()
-                await self._process_single_msg(private_chat_id)
+                event = self.events[private_chat_id]
+                event.clear()
+                timeout = await self._process_single_msg(private_chat_id)
+                await asyncio.wait_for(event.wait(), timeout=timeout)
             except TimeoutError:
                 pass
             except Exception as e:
@@ -194,7 +214,9 @@ class SenderTaskManager:
 
         return sent_msg
 
-    async def send_group_media(self, msg_media_group: list[ScheduledMessage], group_pair: GroupPair):
+    async def send_group_media(
+        self, msg_media_group: list[ScheduledMessage], group_pair: GroupPair
+    ):
         media_list = []
         for msg in msg_media_group:
             if msg.media_type == 'PHOTO':
@@ -225,6 +247,8 @@ class SenderTaskManager:
                     raise RuntimeError(f"{msg.id=}: Unexpected mime type")
                 media_list.append(single_media)
 
+        media_list = media_list[:10]
+
         sent_msgs = await self.bot.send_media_group(
             group_pair.public_chat_id, media=media_list
         )
@@ -235,9 +259,7 @@ class SenderTaskManager:
             msg.status = MessageStatusEnum.SENT
 
             try:
-                await self.bot.delete_message(
-                    msg.group_pair_id, msg.message_id
-                )
+                await self.bot.delete_message(msg.group_pair_id, msg.message_id)
             except TelegramAPIError:
                 pass
 
@@ -268,11 +290,10 @@ class SenderTaskManager:
             raise RuntimeError(f"{msg.id=}: Unexpected media type")
 
         media_list.append(single_media)
-
         media_list[0].caption = msg.text
-        sent_msgs = await self.bot.send_media_group(group_pair.public_chat_id,
-                                                    media=media_list,
-                                                    request_timeout=90)
+        media_list = media_list[:10]
+
+        sent_msgs = await self.bot.send_media_group(
+            group_pair.public_chat_id, media=media_list, request_timeout=90
+        )
         return sent_msgs[0]
-
-

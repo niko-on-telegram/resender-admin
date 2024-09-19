@@ -60,7 +60,7 @@ class SenderTaskManager:
             next_msg = await get_next_msg(session, group_pair)
             logging.debug(f"{private_chat_id=}: Next msg is {next_msg}")
             if next_msg is None:
-                return
+                return group_pair.interval
 
             logging.debug(f"{private_chat_id=}: Sending...")
 

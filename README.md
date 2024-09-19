@@ -3,7 +3,7 @@
 ---
 
 ### Setting up the environment
-Rename the `.env.example` file to `.env` in the project's root directory, then populate it with all the necessary values.
+Rename the `example.env` file to `.env` in the project's root directory, then populate it with all the necessary values.
 
 ### Runing the bot:
 

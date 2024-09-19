@@ -57,6 +57,7 @@ class ScheduledMessage(Base):
     links: Mapped[str | None]
     file_id: Mapped[str | None]
     media_group_id: Mapped[str | None]
+    media_type: Mapped[str | None]
 
     def __str__(self):
         return (

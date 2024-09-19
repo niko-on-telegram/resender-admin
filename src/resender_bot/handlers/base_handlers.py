@@ -207,8 +207,18 @@ def extract_info(message: Message):
             message.caption, message.caption_entities
         )
     links_str = ';'.join(links) or None
-    file_id = message.photo[-1].file_id if message.photo else None
-    return message_cleared_str, links_str, file_id
+    file_id = None
+    media_type = None
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        media_type = "PHOTO"
+    elif message.video:
+        file_id = message.video.file_id
+        media_type = "VIDEO"
+    elif message.animation:
+        file_id = message.animation.file_id
+        media_type = "ANIMATION"
+    return message_cleared_str, links_str, file_id, media_type
 
 
 @router.message()
@@ -218,7 +228,7 @@ async def any_message(message: Message, db_session: AsyncSession):
 
     logging.info(f"Adding new message: {message.text=}")
 
-    message_cleared_str, links_str, file_id = extract_info(message)
+    message_cleared_str, links_str, file_id, media_type = extract_info(message)
 
     scheduled_msg = ScheduledMessage(
         message_id=message.message_id,
@@ -227,6 +237,7 @@ async def any_message(message: Message, db_session: AsyncSession):
         links=links_str,
         file_id=file_id,
         media_group_id=message.media_group_id,
+        media_type=media_type
     )
 
     db_session.add(scheduled_msg)
@@ -244,7 +255,7 @@ async def any_edit_message(message: Message, db_session: AsyncSession):
 
     logging.info(f"Editing existing message: {message.text=}")
 
-    message_cleared_str, links_str, file_id = extract_info(message)
+    message_cleared_str, links_str, file_id, media_type = extract_info(message)
 
     scheduled_msg = await get_scheduled_message(
         db_session, message.message_id, message.chat.id
@@ -252,5 +263,6 @@ async def any_edit_message(message: Message, db_session: AsyncSession):
     scheduled_msg.text = message_cleared_str
     scheduled_msg.links = links_str
     scheduled_msg.file_id = file_id
+    scheduled_msg.media_type = media_type
 
     logging.info("Updated successfully")

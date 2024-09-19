@@ -6,14 +6,14 @@ from asyncio import Task
 import aiohttp
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import URLInputFile, InputMediaPhoto, InputMediaVideo
+from aiogram.types import URLInputFile, InputMediaPhoto, InputMediaVideo, InputMediaAnimation
 
 from database.database_connector import (
     GroupPair,
     DatabaseConnector,
     MessageStatusEnum,
     get_next_msg,
-    get_all_matching_media,
+    get_all_matching_media, ScheduledMessage,
 )
 
 
@@ -47,7 +47,8 @@ class SenderTaskManager:
         async with self.db.session_factory.begin() as session:
             group_pair = await session.get(GroupPair, private_chat_id)
             if group_pair is None:
-                raise RuntimeError(f"{private_chat_id=}: No group pair in the database for {private_chat_id=}, quiting this task")
+                raise RuntimeError(
+                    f"{private_chat_id=}: No group pair in the database for {private_chat_id=}, quiting this task")
             # noinspection PyTypeChecker
             next_msg = await get_next_msg(session, group_pair)
             logging.debug(f"{private_chat_id=}: Next msg is {next_msg}")
@@ -65,36 +66,11 @@ class SenderTaskManager:
                     msg_media_group = await get_all_matching_media(
                         session, next_msg.media_group_id
                     )
-                    media_list = []
-                    for msg in msg_media_group:
-                        single_media = InputMediaPhoto(media=msg.file_id)
-                        if msg.text:
-                            single_media.caption = msg.text
-                        media_list.append(single_media)
-                    sent_msgs = await self.bot.send_media_group(
-                        group_pair.public_chat_id, media=media_list
-                    )
-                    sent_msg = sent_msgs[0]
-                    # hack
-                    for msg in msg_media_group:
-                        msg.status = MessageStatusEnum.SENT
-
-                        try:
-                            await self.bot.delete_message(
-                                msg.group_pair_id, msg.message_id
-                            )
-                        except TelegramAPIError:
-                            logging.exception(
-                                f"{private_chat_id=}: Exception while trying to delete message:"
-                            )
+                    # noinspection PyTypeChecker
+                    sent_msg = await self.send_group_media(msg_media_group, group_pair)
                 elif next_msg.file_id:
                     # noinspection PyTypeChecker
-                    sent_msg = await self.bot.send_photo(
-                        group_pair.public_chat_id,
-                        next_msg.file_id,
-                        caption=next_msg.text,
-                        request_timeout=20,
-                    )
+                    sent_msg = await self.send_single_media(next_msg, group_pair)
                 elif next_msg.links:
                     splited_links = next_msg.links.split(';')
                     if len(splited_links) == 1:
@@ -176,3 +152,66 @@ class SenderTaskManager:
                 )
 
                 await self.bot.send_message(self.admin_id, error_message)
+
+    async def send_single_media(self, next_msg: ScheduledMessage, group_pair: GroupPair):
+        if next_msg.media_type == 'PHOTO':
+            # noinspection PyTypeChecker
+            sent_msg = await self.bot.send_photo(
+                group_pair.public_chat_id,
+                next_msg.file_id,
+                caption=next_msg.text,
+                request_timeout=20,
+            )
+        elif next_msg.media_type == 'VIDEO':
+            # noinspection PyTypeChecker
+            sent_msg = await self.bot.send_video(
+                group_pair.public_chat_id,
+                next_msg.file_id,
+                caption=next_msg.text,
+                request_timeout=20,
+            )
+        elif next_msg.media_type == 'ANIMATION':
+            # noinspection PyTypeChecker
+            sent_msg = await self.bot.send_animation(
+                group_pair.public_chat_id,
+                next_msg.file_id,
+                caption=next_msg.text,
+                request_timeout=20,
+            )
+        else:
+            raise RuntimeError(f"{next_msg.id=}: Unexpected media type")
+
+        return sent_msg
+
+    async def send_group_media(self, msg_media_group: list[ScheduledMessage], group_pair: GroupPair):
+        media_list = []
+        for msg in msg_media_group:
+            if msg.media_type == 'PHOTO':
+                single_media = InputMediaPhoto(media=msg.file_id)
+            elif msg.media_type == 'VIDEO':
+                single_media = InputMediaVideo(media=msg.file_id)
+            elif msg.media_type == 'ANIMATION':
+                single_media = InputMediaAnimation(media=msg.file_id)
+            else:
+                raise RuntimeError(f"{msg.id=}: Unexpected media type")
+            if msg.text:
+                single_media.caption = msg.text
+            media_list.append(single_media)
+
+        sent_msgs = await self.bot.send_media_group(
+            group_pair.public_chat_id, media=media_list
+        )
+
+        # early delete and mark as sent for all except first, which will be handled
+        # as in other cases
+        for msg in msg_media_group[1:]:
+            msg.status = MessageStatusEnum.SENT
+
+            try:
+                await self.bot.delete_message(
+                    msg.group_pair_id, msg.message_id
+                )
+            except TelegramAPIError:
+                pass
+
+        return sent_msgs[0]

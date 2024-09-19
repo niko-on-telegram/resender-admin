@@ -237,7 +237,7 @@ async def any_message(message: Message, db_session: AsyncSession):
         file_id=file_id,
         media_group_id=message.media_group_id,
         media_type=media_type,
-        # meta_info=message.model_dump_json(exclude_unset=True)
+        meta_info="empty"
     )
 
     db_session.add(scheduled_msg)

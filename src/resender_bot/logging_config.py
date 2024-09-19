@@ -39,7 +39,7 @@ def get_logging_config(app_name: str):
             },
             "file": {
                 "()": RotatingFileHandler,
-                "level": "INFO",
+                "level": "DEBUG",
                 "formatter": "main",
                 "filename": f"logs/{app_name}_log.log",
                 "maxBytes": 5000000,

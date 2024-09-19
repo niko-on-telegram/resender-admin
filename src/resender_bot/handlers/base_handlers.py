@@ -237,7 +237,7 @@ async def any_message(message: Message, db_session: AsyncSession):
         file_id=file_id,
         media_group_id=message.media_group_id,
         media_type=media_type,
-        meta_info=message.model_dump_json(exclude_unset=True)
+        # meta_info=message.model_dump_json(exclude_unset=True)
     )
 
     db_session.add(scheduled_msg)
@@ -261,6 +261,6 @@ async def any_edit_message(message: Message, db_session: AsyncSession):
     scheduled_msg.links = links_str
     scheduled_msg.file_id = file_id
     scheduled_msg.media_type = media_type
-    scheduled_msg.meta_info = message.model_dump_json(exclude_unset=True)
+    # scheduled_msg.meta_info = message.model_dump_json(exclude_unset=True)
 
     logging.info("Updated successfully")

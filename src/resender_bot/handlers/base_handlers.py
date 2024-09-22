@@ -92,6 +92,7 @@ async def register_handler(
 
     new_pair = GroupPair(public_chat_id=channel_id, private_chat_id=private_chat_id)
     db_session.add(new_pair)
+    await db_session.commit()
     task_manager.add_task(new_pair)
     await message.answer("Registered successfully!")
 

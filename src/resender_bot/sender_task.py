@@ -12,6 +12,7 @@ from aiogram.types import (
     InputMediaVideo,
     InputMediaAnimation,
 )
+from pydantic import BaseModel
 
 from database.database_connector import (
     GroupPair,
@@ -23,10 +24,21 @@ from database.database_connector import (
 )
 
 
-async def get_mime(link: str):
+class LinkInfo(BaseModel):
+    mime: str
+    detail: str
+    size: int
+
+
+# 50 MB is a file size limit for bot
+TELEGRAM_FILE_SZ_LIMIT = 50 * 1024 * 1024
+
+
+async def get_link_info(link: str) -> LinkInfo:
     async with aiohttp.ClientSession() as session:
         async with session.get(link) as r:
-            return r.content_type.split('/')
+            mime, detail = r.content_type.split('/')
+            return LinkInfo(mime=mime, detail=detail, size=r.content_length)
 
 
 class SenderTaskManager:
@@ -80,21 +92,27 @@ class SenderTaskManager:
                 elif next_msg.links:
                     splited_links = next_msg.links.split(';')
                     if len(splited_links) == 1:
-                        mime, detail = await get_mime(splited_links[0])
-                        if mime == 'image' and detail == 'gif':
+                        link_info = await get_link_info(splited_links[0])
+
+                        if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
+                            logging.warning("Exceeded telegram file size limit")
+                            next_msg.status = MessageStatusEnum.ERROR
+                            return group_pair.interval
+
+                        if link_info.mime == 'image' and link_info.detail == 'gif':
                             sent_msg = await self.bot.send_animation(
                                 group_pair.public_chat_id,
                                 URLInputFile(url=splited_links[0]),
                                 caption=next_msg.text,
                             )
-                        elif mime == 'image':
+                        elif link_info.mime == 'image':
                             # noinspection PyTypeChecker
                             sent_msg = await self.bot.send_photo(
                                 group_pair.public_chat_id,
                                 URLInputFile(url=splited_links[0]),
                                 caption=next_msg.text,
                             )
-                        elif mime == 'video':
+                        elif link_info.mime == 'video':
                             # noinspection PyTypeChecker
                             sent_msg = await self.bot.send_video(
                                 group_pair.public_chat_id,
@@ -105,16 +123,21 @@ class SenderTaskManager:
                     else:
                         media_list = []
                         for link in splited_links:
-                            mime, detail = await get_mime(link)
-                            if detail == 'gif':
+                            link_info = await get_link_info(link)
+
+                            if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
+                                logging.info(f"{next_msg.id=}: File size exceeded for link {link=}")
+                                continue
+
+                            if link_info.detail == 'gif':
                                 single_media = InputMediaAnimation(
                                     media=URLInputFile(url=link)
                                 )
-                            elif mime == 'image':
+                            elif link_info.mime == 'image':
                                 single_media = InputMediaPhoto(
                                     media=URLInputFile(url=link)
                                 )
-                            elif mime == 'video':
+                            elif link_info.mime == 'video':
                                 single_media = InputMediaVideo(
                                     media=URLInputFile(url=link)
                                 )
@@ -123,6 +146,11 @@ class SenderTaskManager:
                                     f"{next_msg.id=}: Unexpected mime type"
                                 )
                             media_list.append(single_media)
+                        if len(media_list) == 0:
+                            logging.warning(f"{next_msg.id=}: Couldn't send any files, skipping")
+                            next_msg.status = MessageStatusEnum.ERROR
+                            return group_pair.interval
+
                         media_list[0].caption = next_msg.text
                         sent_msgs = await self.bot.send_media_group(
                             group_pair.public_chat_id,
@@ -236,12 +264,17 @@ class SenderTaskManager:
                 continue
             splited_links = msg.links.split(';')
             for link in splited_links:
-                mime, detail = await get_mime(link)
-                if detail == 'gif':
+                link_info = await get_link_info(link)
+
+                if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
+                    logging.warning(f"{msg.id=}: Skipping link, file too big: {link}")
+                    continue
+
+                if link_info.detail == 'gif':
                     single_media = InputMediaAnimation(media=URLInputFile(url=link))
-                elif mime == 'image':
+                elif link_info.mime == 'image':
                     single_media = InputMediaPhoto(media=URLInputFile(url=link))
-                elif mime == 'video':
+                elif link_info.mime == 'video':
                     single_media = InputMediaVideo(media=URLInputFile(url=link))
                 else:
                     raise RuntimeError(f"{msg.id=}: Unexpected mime type")
@@ -269,12 +302,17 @@ class SenderTaskManager:
         media_list = []
         splited_links = msg.links.split(';')
         for link in splited_links:
-            mime, detail = await get_mime(link)
-            if detail == 'gif':
+            link_info = await get_link_info(link)
+
+            if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
+                logging.warning(f"{msg.id=} file size limit exceeded: {link}")
+                continue
+
+            if link_info.detail == 'gif':
                 single_media = InputMediaAnimation(media=URLInputFile(url=link))
-            elif mime == 'image':
+            elif link_info.mime == 'image':
                 single_media = InputMediaPhoto(media=URLInputFile(url=link))
-            elif mime == 'video':
+            elif link_info.mime == 'video':
                 single_media = InputMediaVideo(media=URLInputFile(url=link))
             else:
                 raise RuntimeError(f"{msg.id=}: Unexpected mime type")

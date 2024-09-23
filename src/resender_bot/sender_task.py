@@ -13,6 +13,7 @@ from aiogram.types import (
     InputMediaAnimation,
 )
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database_connector import (
     GroupPair,
@@ -76,108 +77,13 @@ class SenderTaskManager:
 
             logging.debug(f"{private_chat_id=}: Sending...")
 
-            sent_msg = None
-
             try:
-                if next_msg.media_group_id:
-                    # noinspection PyTypeChecker
-                    msg_media_group = await get_all_matching_media(
-                        session, next_msg.media_group_id
-                    )
-                    sent_msg = await self.send_group_media(msg_media_group, group_pair)
-                elif next_msg.file_id and next_msg.links:
-                    sent_msg = await self.send_mixed_media(next_msg, group_pair)
-                elif next_msg.file_id:
-                    sent_msg = await self.send_single_media(next_msg, group_pair)
-                elif next_msg.links:
-                    splited_links = next_msg.links.split(';')
-                    if len(splited_links) == 1:
-                        link_info = await get_link_info(splited_links[0])
-
-                        if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
-                            logging.warning("Exceeded telegram file size limit")
-                            next_msg.status = MessageStatusEnum.ERROR
-                            return group_pair.interval
-
-                        if link_info.mime == 'image' and link_info.detail == 'gif':
-                            sent_msg = await self.bot.send_animation(
-                                group_pair.public_chat_id,
-                                URLInputFile(url=splited_links[0]),
-                                caption=next_msg.text,
-                            )
-                        elif link_info.mime == 'image':
-                            # noinspection PyTypeChecker
-                            sent_msg = await self.bot.send_photo(
-                                group_pair.public_chat_id,
-                                URLInputFile(url=splited_links[0]),
-                                caption=next_msg.text,
-                            )
-                        elif link_info.mime == 'video':
-                            # noinspection PyTypeChecker
-                            sent_msg = await self.bot.send_video(
-                                group_pair.public_chat_id,
-                                URLInputFile(url=splited_links[0]),
-                                caption=next_msg.text,
-                                request_timeout=90,
-                            )
-                    else:
-                        media_list = []
-                        for link in splited_links:
-                            link_info = await get_link_info(link)
-
-                            if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
-                                logging.info(f"{next_msg.id=}: File size exceeded for link {link=}")
-                                continue
-
-                            if link_info.detail == 'gif':
-                                single_media = InputMediaAnimation(
-                                    media=URLInputFile(url=link)
-                                )
-                            elif link_info.mime == 'image':
-                                single_media = InputMediaPhoto(
-                                    media=URLInputFile(url=link)
-                                )
-                            elif link_info.mime == 'video':
-                                single_media = InputMediaVideo(
-                                    media=URLInputFile(url=link)
-                                )
-                            else:
-                                raise RuntimeError(
-                                    f"{next_msg.id=}: Unexpected mime type"
-                                )
-                            media_list.append(single_media)
-                        if len(media_list) == 0:
-                            logging.warning(f"{next_msg.id=}: Couldn't send any files, skipping")
-                            next_msg.status = MessageStatusEnum.ERROR
-                            return group_pair.interval
-
-                        media_list[0].caption = next_msg.text
-                        sent_msgs = await self.bot.send_media_group(
-                            group_pair.public_chat_id,
-                            media=media_list,
-                            request_timeout=90,
-                        )
-                        sent_msg = sent_msgs[0]
-                elif next_msg.text:
-                    # noinspection PyTypeChecker
-                    sent_msg = await self.bot.send_message(
-                        group_pair.public_chat_id,
-                        text=next_msg.text,
-                        request_timeout=20,
-                    )
-
-                if sent_msg is not None:
-                    logging.debug(f"{private_chat_id=}: {sent_msg=}")
-                else:
-                    err = f"{private_chat_id=}: Sent msg for {next_msg.id=} is None for some reason"
-                    logging.error(err)
-                    await self.bot.send_message(self.admin_id, err)
-                next_msg.status = MessageStatusEnum.SENT
+                await self._compose_and_send_msg(private_chat_id, next_msg, session, group_pair)
             except TelegramAPIError:
                 err = f"{private_chat_id=}: Exception while trying to resend message:"
                 logging.exception(err)
-                await self.bot.send_message(self.admin_id, err)
                 next_msg.status = MessageStatusEnum.ERROR
+                await self.bot.send_message(self.admin_id, err)
 
             try:
                 await self.bot.delete_message(next_msg.group_pair_id, next_msg.message_id)
@@ -187,6 +93,112 @@ class SenderTaskManager:
                 )
 
         return group_pair.interval
+
+    async def _compose_and_send_msg(
+        self,
+        private_chat_id: int,
+        next_msg: ScheduledMessage,
+        session: AsyncSession,
+        group_pair: GroupPair,
+    ):
+        sent_msg = None
+
+        if next_msg.media_group_id:
+            # noinspection PyTypeChecker
+            msg_media_group = await get_all_matching_media(
+                session, next_msg.media_group_id
+            )
+            sent_msg = await self.send_group_media(msg_media_group, group_pair)
+        elif next_msg.file_id and next_msg.links:
+            sent_msg = await self.send_mixed_media(next_msg, group_pair)
+        elif next_msg.file_id:
+            sent_msg = await self.send_single_media(next_msg, group_pair)
+        elif next_msg.links:
+            splited_links = next_msg.links.split(';')
+            if len(splited_links) == 1:
+                link_info = await get_link_info(splited_links[0])
+
+                if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
+                    logging.info(
+                        f"{next_msg.id=}: File size exceeded for link {splited_links[0]=}"
+                    )
+                    next_msg.status = MessageStatusEnum.ERROR
+                    return
+
+                if link_info.mime == 'image' and link_info.detail == 'gif':
+                    sent_msg = await self.bot.send_animation(
+                        group_pair.public_chat_id,
+                        URLInputFile(url=splited_links[0]),
+                        caption=next_msg.text,
+                    )
+                elif link_info.mime == 'image':
+                    # noinspection PyTypeChecker
+                    sent_msg = await self.bot.send_photo(
+                        group_pair.public_chat_id,
+                        URLInputFile(url=splited_links[0]),
+                        caption=next_msg.text,
+                    )
+                elif link_info.mime == 'video':
+                    # noinspection PyTypeChecker
+                    sent_msg = await self.bot.send_video(
+                        group_pair.public_chat_id,
+                        URLInputFile(url=splited_links[0]),
+                        caption=next_msg.text,
+                        request_timeout=90,
+                    )
+            else:
+                media_list = []
+                for link in splited_links:
+                    link_info = await get_link_info(link)
+
+                    if link_info.size > TELEGRAM_FILE_SZ_LIMIT:
+                        logging.info(
+                            f"{next_msg.id=}: File size exceeded for link {link=}"
+                        )
+                        continue
+
+                    if link_info.detail == 'gif':
+                        single_media = InputMediaAnimation(
+                            media=URLInputFile(url=link)
+                        )
+                    elif link_info.mime == 'image':
+                        single_media = InputMediaPhoto(media=URLInputFile(url=link))
+                    elif link_info.mime == 'video':
+                        single_media = InputMediaVideo(media=URLInputFile(url=link))
+                    else:
+                        raise RuntimeError(f"{next_msg.id=}: Unexpected mime type")
+                    media_list.append(single_media)
+                if len(media_list) == 0:
+                    logging.warning(
+                        f"{next_msg.id=}: Couldn't send any files, skipping"
+                    )
+                    next_msg.status = MessageStatusEnum.ERROR
+                    return
+
+                media_list[0].caption = next_msg.text
+                sent_msgs = await self.bot.send_media_group(
+                    group_pair.public_chat_id,
+                    media=media_list,
+                    request_timeout=90,
+                )
+                sent_msg = sent_msgs[0]
+        elif next_msg.text:
+            # noinspection PyTypeChecker
+            sent_msg = await self.bot.send_message(
+                group_pair.public_chat_id,
+                text=next_msg.text,
+                request_timeout=20,
+            )
+
+        if sent_msg is not None:
+            logging.debug(f"{private_chat_id=}: {sent_msg=}")
+        else:
+            err = f"{private_chat_id=}: Sent msg for {next_msg.id=} is None for some reason"
+            logging.error(err)
+            await self.bot.send_message(self.admin_id, err)
+
+        next_msg.status = MessageStatusEnum.SENT
+
 
     async def _sender_task(self, private_chat_id: int):
         while True:

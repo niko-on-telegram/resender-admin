@@ -20,6 +20,7 @@ from database.database_connector import (
     ScheduledMessage,
     get_all_pairs,
     get_scheduled_message,
+    upsert_new_group_pair,
 )
 from resender_bot.sender_task import SenderTaskManager
 
@@ -69,11 +70,11 @@ async def is_bot_admin(bot: Bot, channel_id: int) -> bool:
 
 @router.message(Command('register'), F.chat.type != ChatType.PRIVATE)
 async def register_handler(
-        message: Message,
-        bot: Bot,
-        command: CommandObject,
-        db_session: AsyncSession,
-        task_manager: SenderTaskManager,
+    message: Message,
+    bot: Bot,
+    command: CommandObject,
+    db_session: AsyncSession,
+    task_manager: SenderTaskManager,
 ):
     private_chat_id = message.chat.id
 
@@ -90,10 +91,9 @@ async def register_handler(
         await message.answer("Bot must be an administrator in the registered channel")
         return
 
-    new_pair = GroupPair(public_chat_id=channel_id, private_chat_id=private_chat_id)
-    db_session.add(new_pair)
+    await upsert_new_group_pair(db_session, private_chat_id, channel_id)
     await db_session.commit()
-    task_manager.add_task(new_pair)
+    task_manager.add_task(private_chat_id)
     await message.answer("Registered successfully!")
 
 
@@ -125,10 +125,10 @@ async def set_ordered_handler(message: Message, db_session: AsyncSession):
 
 @router.message(Command('set_interval'), F.chat.type != ChatType.PRIVATE)
 async def set_interval_handler(
-        message: Message,
-        command: CommandObject,
-        db_session: AsyncSession,
-        task_manager: SenderTaskManager,
+    message: Message,
+    command: CommandObject,
+    db_session: AsyncSession,
+    task_manager: SenderTaskManager,
 ):
     private_chat_id = message.chat.id
 
@@ -184,8 +184,8 @@ def extract_text(text: str, entities):
     for ent in entities:
         if ent.type != "url":
             continue
-        encoded_link = encoded_text[ent.offset * 2: (ent.offset + ent.length) * 2]
-        decoded_text_piece = encoded_text[last_offset: ent.offset * 2].decode(
+        encoded_link = encoded_text[ent.offset * 2 : (ent.offset + ent.length) * 2]
+        decoded_text_piece = encoded_text[last_offset : ent.offset * 2].decode(
             'utf-16-le'
         )
         message_cleared_text += decoded_text_piece
@@ -238,7 +238,7 @@ async def any_message(message: Message, db_session: AsyncSession):
         file_id=file_id,
         media_group_id=message.media_group_id,
         media_type=media_type,
-        meta_info="empty"
+        meta_info="empty",
     )
 
     db_session.add(scheduled_msg)

@@ -50,12 +50,16 @@ class SenderTaskManager:
         self.admin_id = admin_id
         self.events: dict[int, asyncio.Event] = {}
 
-    def add_task(self, group_pair: GroupPair):
-        self.tasks[group_pair.private_chat_id] = asyncio.create_task(
-            self._sender_task(group_pair.private_chat_id),
-            name=str(group_pair.private_chat_id),
+    def add_task(self, private_chat_id: int):
+        if private_chat_id in self.tasks:
+            logging.info(f"Task for {private_chat_id=} is already registered, skipping ")
+            return
+
+        self.tasks[private_chat_id] = asyncio.create_task(
+            self._sender_task(private_chat_id),
+            name=str(private_chat_id),
         )
-        self.events[group_pair.private_chat_id] = asyncio.Event()
+        self.events[private_chat_id] = asyncio.Event()
 
     def update_interval(self, group_pair: GroupPair):
         self.events[group_pair.private_chat_id].set()
@@ -78,7 +82,9 @@ class SenderTaskManager:
             logging.debug(f"{private_chat_id=}: Sending...")
 
             try:
-                await self._compose_and_send_msg(private_chat_id, next_msg, session, group_pair)
+                await self._compose_and_send_msg(
+                    private_chat_id, next_msg, session, group_pair
+                )
             except TelegramAPIError:
                 err = f"{private_chat_id=}: Exception while trying to resend message:"
                 logging.exception(err)
@@ -158,9 +164,7 @@ class SenderTaskManager:
                         continue
 
                     if link_info.detail == 'gif':
-                        single_media = InputMediaAnimation(
-                            media=URLInputFile(url=link)
-                        )
+                        single_media = InputMediaAnimation(media=URLInputFile(url=link))
                     elif link_info.mime == 'image':
                         single_media = InputMediaPhoto(media=URLInputFile(url=link))
                     elif link_info.mime == 'video':
@@ -169,9 +173,7 @@ class SenderTaskManager:
                         raise RuntimeError(f"{next_msg.id=}: Unexpected mime type")
                     media_list.append(single_media)
                 if len(media_list) == 0:
-                    logging.warning(
-                        f"{next_msg.id=}: Couldn't send any files, skipping"
-                    )
+                    logging.warning(f"{next_msg.id=}: Couldn't send any files, skipping")
                     next_msg.status = MessageStatusEnum.ERROR
                     return
 
@@ -193,12 +195,13 @@ class SenderTaskManager:
         if sent_msg is not None:
             logging.debug(f"{private_chat_id=}: {sent_msg=}")
         else:
-            err = f"{private_chat_id=}: Sent msg for {next_msg.id=} is None for some reason"
+            err = (
+                f"{private_chat_id=}: Sent msg for {next_msg.id=} is None for some reason"
+            )
             logging.error(err)
             await self.bot.send_message(self.admin_id, err)
 
         next_msg.status = MessageStatusEnum.SENT
-
 
     async def _sender_task(self, private_chat_id: int):
         while True:

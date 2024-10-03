@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import BigInteger, DateTime, select, and_, func
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -59,7 +60,6 @@ class ScheduledMessage(Base):
     media_group_id: Mapped[str | None]
     media_type: Mapped[str | None]
     meta_info: Mapped[str]
-
 
     def __str__(self):
         return (
@@ -120,6 +120,22 @@ async def get_scheduled_message(
     )
     result = await db_session.execute(query)
     return result.scalar_one_or_none()
+
+
+async def upsert_new_group_pair(
+    db_session: AsyncSession, private_chat_id: int, public_channel_id: int
+):
+    query = (
+        insert(GroupPair)
+        .values(private_chat_id=private_chat_id, public_chat_id=public_channel_id)
+        .on_conflict_do_update(
+            index_elements=[GroupPair.private_chat_id],
+            set_={GroupPair.public_chat_id: public_channel_id},
+        )
+    )
+
+    result = await db_session.execute(query)
+    return result.rowcount
 
 
 class DatabaseConnector:
